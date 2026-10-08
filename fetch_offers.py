@@ -2,7 +2,7 @@
 Usage : python fetch_offers.py
 Aucune dépendance à installer (Python 3.9 ou plus).
 Une exécution toutes les 30 minutes suffit."""
-import json, os, re, sys, time, html, urllib.request, urllib.error
+import json, os, re, sys, time, html, datetime, urllib.request, urllib.error
 
 API = "https://civiweb-api-prd.azurewebsites.net/api/Offers/search"
 SITE = "https://mon-vie-via.businessfrance.fr/offres/"
@@ -93,7 +93,7 @@ def main():
     if not out:
         sys.exit("Aucune offre lue. Voir README, partie 'Si ca ne marche pas'.")
     with open("offers.json", "w", encoding="utf-8") as f:
-        json.dump(out, f, ensure_ascii=False)
+        json.dump({"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "total": len(out), "offers": out}, f, ensure_ascii=False)
     print("Business France annonce : %s | lues : %d | doublons ignores : %d | sans titre (gardees) : %d | ecrites : %d" % (total, lues, doublons, sans_titre, len(out)))
     types = {}
     for c in out:
