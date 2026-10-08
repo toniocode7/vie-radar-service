@@ -1,12 +1,12 @@
-name: Mise a jour des offres VIE
+name: Mise à jour des offres
 on:
   schedule:
-    - cron: "0 5 * * *"
+    - cron: "*/30 * * * *"
   workflow_dispatch:
 permissions:
   contents: write
 jobs:
-  fetch:
+  update:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
@@ -14,10 +14,9 @@ jobs:
         with:
           python-version: "3.12"
       - run: python fetch_offers.py
-      - name: Enregistrer offers.json
+      - name: Enregistrer si changement
         run: |
-          git config user.name "vie-radar"
-          git config user.email "vie-radar@users.noreply.github.com"
+          git config user.name "vie-radar-bot"
+          git config user.email "bot@users.noreply.github.com"
           git add offers.json
-          git diff --staged --quiet || git commit -m "Offres du jour"
-          git push
+          git diff --cached --quiet || (git commit -m "Mise à jour des offres" && git push)
