@@ -31,6 +31,30 @@ def clean(t):
     t = html.unescape(re.sub(r"<[^>]+>", " ", str(t or "")))
     return re.sub(r"\s+", " ", t).strip()
 
+def names(v):
+    """Transforme une valeur (texte, liste, objet) en liste de noms lisibles."""
+    out = []
+    if isinstance(v, str):
+        out = [clean(v)]
+    elif isinstance(v, dict):
+        n = pick(v, "name", "label", "libelle", "title", "nameFr", "labelFr", "specializationName", "value")
+        out = [clean(n)] if n else []
+    elif isinstance(v, list):
+        for x in v:
+            out += names(x)
+    return [x for x in out if x]
+
+def specs(o):
+    out = []
+    for k, v in o.items():
+        if "special" in k.lower() and "id" not in k.lower()[-3:]:
+            out += names(v)
+    seen, res = set(), []
+    for x in out:
+        if x not in seen:
+            seen.add(x); res.append(x)
+    return res
+
 def convert(o):
     oid = pick(o, "id", "offerId", "reference")
     desc = " ".join(clean(pick(o, k)) for k in
@@ -52,6 +76,7 @@ def convert(o):
         "d": desc[:MAX_DESC],
         "date": str(pick(o, "creationDate", "startBroadcastDate", "publicationDate", "startDate") or ""),
         "k": clean(pick(o, "missionType", "missionTypeName", "missionTypeLabel", "type")),
+        "sp": specs(o),
         "src": "Business France",
     }
 
@@ -73,6 +98,7 @@ def main():
             total = data.get("count", total)
         if body["skip"] == 0 and items:
             print("Champs recus (utile si un champ est vide) :", sorted(items[0].keys()))
+            print("Champs de specialisation :", {k: v for k, v in items[0].items() if "special" in k.lower()})
         if not items:
             break
         for it in items:
