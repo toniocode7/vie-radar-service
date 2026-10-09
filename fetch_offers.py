@@ -31,29 +31,86 @@ def clean(t):
     t = html.unescape(re.sub(r"<[^>]+>", " ", str(t or "")))
     return re.sub(r"\s+", " ", t).strip()
 
-def names(v):
-    """Transforme une valeur (texte, liste, objet) en liste de noms lisibles."""
+def spec_ids(o):
+    """Identifiants de specialisation d'une offre. Le site les envoie sous forme de texte JSON, par exemple ['["9","205"]']."""
     out = []
-    if isinstance(v, str):
-        out = [clean(v)]
-    elif isinstance(v, dict):
-        n = pick(v, "name", "label", "libelle", "title", "nameFr", "labelFr", "specializationName", "value")
-        out = [clean(n)] if n else []
-    elif isinstance(v, list):
-        for x in v:
-            out += names(x)
-    return [x for x in out if x]
-
-def specs(o):
-    out = []
-    for k, v in o.items():
-        if "special" in k.lower() and "id" not in k.lower()[-3:]:
-            out += names(v)
-    seen, res = set(), []
+    def walk(v):
+        if isinstance(v, str):
+            t = v.strip()
+            if t.startswith("["):
+                try:
+                    walk(json.loads(t)); return
+                except ValueError:
+                    pass
+            if t:
+                out.append(t)
+        elif isinstance(v, (int, float)):
+            out.append(str(int(v)))
+        elif isinstance(v, list):
+            for x in v:
+                walk(x)
+        elif isinstance(v, dict):
+            walk(pick(v, "id", "specializationId", "value"))
+    walk(o.get("specialization")); walk(o.get("specializations"))
+    res = []
     for x in out:
-        if x not in seen:
-            seen.add(x); res.append(x)
+        if x not in res:
+            res.append(x)
     return res
+
+NAME_KEYS = ("name", "label", "libelle", "title", "nameFr", "labelFr", "libelleFr", "specializationName", "text", "value")
+CANDIDATES = ["Specialization", "Specializations", "Specialisation", "Specialisations",
+              "Specialization/GetAll", "Specializations/GetAll", "Reference/Specializations", "Reference/Specialization",
+              "References/Specializations", "Referentiel/Specializations", "Nomenclature/Specializations",
+              "Nomenclature/Specialization", "Nomenclatures/Specializations", "Offers/specializations", "Offers/Specializations",
+              "Offers/filters", "Filters", "Parameters/Specializations", "Common/Specializations", "Data/Specializations",
+              "Specialization/list", "Specializations/list", "Specialization/search", "Offers/GetSpecializations", "Offer/specializations",
+              "Reference/GetSpecializations", "Referential/Specializations", "Lists/Specializations", "Parameter/Specializations",
+              "Reference/specialization", "References/specializations", "Reference", "References", "Referentiel", "Nomenclature", "Nomenclatures"]
+
+def get(path):
+    req = urllib.request.Request(
+        "https://civiweb-api-prd.azurewebsites.net/api/" + path, method="GET",
+        headers={"Accept": "application/json", "X-API-KEY": API_KEY, "User-Agent": "Mozilla/5.0 (compatible; vie-radar personnel)",
+                 "Origin": "https://mon-vie-via.businessfrance.fr", "Referer": "https://mon-vie-via.businessfrance.fr/"})
+    with urllib.request.urlopen(req, timeout=30) as r:
+        return json.loads(r.read().decode("utf-8"))
+
+def table(data, wanted):
+    """Cherche dans une reponse une liste d'elements {id, nom} et rend {id: nom}."""
+    found = {}
+    def visit(v):
+        if isinstance(v, list):
+            for x in v:
+                visit(x)
+        elif isinstance(v, dict):
+            i = pick(v, "id", "Id", "specializationId", "value")
+            n = pick(v, *NAME_KEYS)
+            if i is not None and isinstance(n, str):
+                found[str(i)] = clean(n)
+            for x in v.values():
+                if isinstance(x, (list, dict)):
+                    visit(x)
+    visit(data)
+    return found
+
+def spec_names(wanted):
+    """Essaie plusieurs adresses du site pour retrouver le nom de chaque specialisation."""
+    for path in CANDIDATES:
+        try:
+            data = get(path)
+        except urllib.error.HTTPError as e:
+            print("Specialisations", path, "-> HTTP", e.code)
+            continue
+        except Exception as e:
+            print("Specialisations", path, "-> erreur", str(e)[:60])
+            continue
+        t = table(data, wanted)
+        print("Specialisations", path, "-> OK,", len(t), "noms, apercu :", json.dumps(data, ensure_ascii=False)[:200])
+        if wanted and sum(1 for w in wanted if w in t) >= max(1, len(wanted) // 2):
+            print("Specialisations : liste trouvee sur", path)
+            return t
+    return {}
 
 def convert(o):
     oid = pick(o, "id", "offerId", "reference")
@@ -76,7 +133,7 @@ def convert(o):
         "d": desc[:MAX_DESC],
         "date": str(pick(o, "creationDate", "startBroadcastDate", "publicationDate", "startDate") or ""),
         "k": clean(pick(o, "missionType", "missionTypeName", "missionTypeLabel", "type")),
-        "sp": specs(o),
+        "spi": spec_ids(o),
         "src": "Business France",
     }
 
@@ -118,6 +175,12 @@ def main():
         time.sleep(0.7)
     if not out:
         sys.exit("Aucune offre lue. Voir README, partie 'Si ca ne marche pas'.")
+    wanted = sorted({i for c in out for i in c["spi"]})
+    print("Identifiants de specialisation vus :", len(wanted), wanted[:30])
+    names = spec_names(wanted)
+    for c in out:
+        c["sp"] = [names[i] for i in c["spi"] if i in names]
+    print("Offres avec specialisation nommee :", sum(1 for c in out if c["sp"]))
     with open("offers.json", "w", encoding="utf-8") as f:
         json.dump({"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "total": len(out), "offers": out}, f, ensure_ascii=False)
     print("Business France annonce : %s | lues : %d | doublons ignores : %d | sans titre (gardees) : %d | ecrites : %d" % (total, lues, doublons, sans_titre, len(out)))
