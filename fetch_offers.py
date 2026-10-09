@@ -137,6 +137,35 @@ def convert(o):
         "src": "Business France",
     }
 
+def scan_specs(known):
+    """Interroge le site avec chaque numero de specialisation (1 a 400) pour savoir quelles offres il renvoie.
+    Cela permet de reconstituer les domaines. Fait une seule fois, le resultat est garde dans offers.json."""
+    res, errs = {}, 0
+    for x in range(1, 401):
+        body = {"limit": 100, "skip": 0, "query": "", "activitySectorId": [], "missionsTypesIds": [],
+                "missionsDurations": [], "gerographicZones": [], "geographicZones": [], "countriesIds": [],
+                "studiesLevelId": [], "companiesSizeIds": [], "specializationsIds": [x], "targetIds": [], "teletravail": None}
+        ids = []
+        try:
+            for _ in range(10):
+                d = post(body)
+                it = d.get("result") or d.get("results") or d.get("items") or []
+                ids += [i.get("id") for i in it]
+                body["skip"] += len(it)
+                tot = d.get("count") or 0
+                if not it or body["skip"] >= tot:
+                    break
+        except Exception as e:
+            errs += 1
+            print("Scan", x, "erreur", str(e)[:60])
+            time.sleep(1.5)
+            continue
+        if ids:
+            res[str(x)] = ids
+        time.sleep(0.2)
+    print("Scan des specialisations : %d numeros renvoient des offres, %d erreurs" % (len(res), errs))
+    return res if errs < 10 else {}
+
 def main():
     body = {"limit": PAGE, "skip": 0, "query": "", "activitySectorId": [], "missionsTypesIds": [],
             "missionsDurations": [], "gerographicZones": [], "geographicZones": [], "countriesIds": [],
@@ -155,6 +184,8 @@ def main():
             total = data.get("count", total)
         if body["skip"] == 0 and items:
             print("Champs recus (utile si un champ est vide) :", sorted(items[0].keys()))
+            if isinstance(data, dict):
+                print("Cles de la reponse :", {k: (v if not isinstance(v, (list, dict)) else type(v).__name__) for k, v in data.items()})
             print("Champs de specialisation :", {k: v for k, v in items[0].items() if "special" in k.lower()})
         if not items:
             break
@@ -181,8 +212,16 @@ def main():
     for c in out:
         c["sp"] = [names[i] for i in c["spi"] if i in names]
     print("Offres avec specialisation nommee :", sum(1 for c in out if c["sp"]))
+    scan = None
+    try:
+        with open("offers.json", encoding="utf-8") as f:
+            scan = json.load(f).get("specscan")
+    except Exception:
+        scan = None
+    if not scan:
+        scan = scan_specs(wanted)
     with open("offers.json", "w", encoding="utf-8") as f:
-        json.dump({"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "total": len(out), "offers": out}, f, ensure_ascii=False)
+        json.dump({"updated": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"), "total": len(out), "offers": out, "specscan": scan}, f, ensure_ascii=False)
     print("Business France annonce : %s | lues : %d | doublons ignores : %d | sans titre (gardees) : %d | ecrites : %d" % (total, lues, doublons, sans_titre, len(out)))
     types = {}
     for c in out:
