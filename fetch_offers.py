@@ -140,29 +140,51 @@ def convert(o):
 def scan_specs(known):
     """Interroge le site avec chaque numero de specialisation (1 a 400) pour savoir quelles offres il renvoie.
     Cela permet de reconstituer les domaines. Fait une seule fois, le resultat est garde dans offers.json."""
+    def ask(value, skip):
+        body = {"limit": 100, "skip": skip, "query": "", "activitySectorId": [], "missionsTypesIds": [],
+                "missionsDurations": [], "gerographicZones": [], "geographicZones": [], "countriesIds": [],
+                "studiesLevelId": [], "companiesSizeIds": [], "specializationsIds": value, "targetIds": [], "teletravail": None}
+        return post(body)
+    # Cherche la forme que le site accepte : liste de textes, liste de nombres, ou un seul texte
+    forms = [lambda x: [str(x)], lambda x: [int(x)], lambda x: str(x), lambda x: int(x)]
+    form = None
+    for k, f in enumerate(forms):
+        try:
+            d = ask(f(9), 0)
+            print("Scan : forme %d acceptee, %s offres pour le numero 9" % (k, d.get("count")))
+            form = f
+            break
+        except urllib.error.HTTPError as e:
+            try:
+                msg = e.read().decode("utf-8")[:300]
+            except Exception:
+                msg = ""
+            print("Scan : forme %d refusee (HTTP %s) %s" % (k, e.code, msg))
+        except Exception as e:
+            print("Scan : forme %d erreur %s" % (k, str(e)[:80]))
+    if not form:
+        return {}
     res, errs = {}, 0
     for x in range(1, 401):
-        body = {"limit": 100, "skip": 0, "query": "", "activitySectorId": [], "missionsTypesIds": [],
-                "missionsDurations": [], "gerographicZones": [], "geographicZones": [], "countriesIds": [],
-                "studiesLevelId": [], "companiesSizeIds": [], "specializationsIds": [x], "targetIds": [], "teletravail": None}
-        ids = []
+        ids, skip = [], 0
         try:
             for _ in range(10):
-                d = post(body)
+                d = ask(form(x), skip)
                 it = d.get("result") or d.get("results") or d.get("items") or []
                 ids += [i.get("id") for i in it]
-                body["skip"] += len(it)
-                tot = d.get("count") or 0
-                if not it or body["skip"] >= tot:
+                skip += len(it)
+                if not it or skip >= (d.get("count") or 0):
                     break
         except Exception as e:
             errs += 1
             print("Scan", x, "erreur", str(e)[:60])
+            if errs >= 10:
+                break
             time.sleep(1.5)
             continue
         if ids:
             res[str(x)] = ids
-        time.sleep(0.2)
+        time.sleep(0.15)
     print("Scan des specialisations : %d numeros renvoient des offres, %d erreurs" % (len(res), errs))
     return res if errs < 10 else {}
 
